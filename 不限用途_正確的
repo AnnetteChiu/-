@@ -1,0 +1,60 @@
+with v_input as (
+--輸入日期
+select  to_date('20201201','yyyymmdd') as s_date  --統計始期
+       ,to_date('20210131','yyyymmdd') as e_date  --統計終期
+  from dual
+),     v_cscd_1 as (
+--信用帳戶資料(合併日後開戶)
+select a3.acct_nbr_new as acct_nbr, min(a6.odate) as odate, max(a6.cdate) as cdate, max(a6.gdate) as gdate
+  from dm_s_view.cscd a1
+ inner join dm_s_view.cumb a2 on a1.acno = a2.acno
+  left join dm_s_view.d_s_acct_combine a3 on a1.acno || a2.ckno = a3.acct_nbr
+  left join dm_s_view.d_s_channel a4 on a1.bhno = a4.branch_nbr
+  left join dm_s_view.d_s_invalid_channel a5 on a1.bhno = a5.branch_nbr
+  left join dm_s_view.cscd a6 on substr(a3.acct_nbr_new,1,10) = a6.acno
+ where a5.invalid_date >= (select s_date from v_input)
+   and a6.odate > a5.invalid_date
+ group by a3.acct_nbr_new
+),     v_cscd_2 as (
+--信用帳戶資料(其它)
+select a3.acct_nbr_new as acct_nbr, min(a1.odate) as odate, max(a1.cdate) as cdate, max(a1.gdate) as gdate
+  from dm_s_view.cscd a1
+ inner join dm_s_view.cumb a2 on a1.acno = a2.acno
+  left join dm_s_view.d_s_acct_combine a3 on a1.acno || a2.ckno = a3.acct_nbr
+  left join dm_s_view.d_s_channel a4 on a1.bhno = a4.branch_nbr
+  left join dm_s_view.d_s_invalid_channel a5 on a1.bhno = a5.branch_nbr
+ where (a5.invalid_date is null or a5.invalid_date >= (select s_date from v_input))
+   and a3.acct_nbr_new not in(select acct_nbr from v_cscd_1)
+ group by a3.acct_nbr_new
+),     v_cscd as (
+--信用帳戶資料
+select * from v_cscd_1 union select * from v_cscd_2
+),     v_open as (
+--信用開戶資料
+select * from v_cscd where odate between (select s_date from v_input) and (select e_date from v_input)
+),     v_cancel as (
+--信用銷戶資料
+select * from v_cscd where cdate between (select s_date from v_input) and (select e_date from v_input)
+),     v_ren as (
+--信用續約資料
+select * from v_cscd where gdate between (select s_date from v_input) and (select e_date from v_input)
+),     v1 as (
+select to_char(odate,'yyyy/mm') as yyyymm, count(distinct acct_nbr) as cnt_op, 0 as cnt_cl, 0 as cnt_re
+  from v_open
+ group by to_char(odate,'yyyy/mm')
+union all
+select to_char(cdate,'yyyy/mm') as yyyymm, 0 as cnt_op, count(distinct acct_nbr) as cnt_cl, 0 as cnt_re
+  from v_cancel
+ group by to_char(cdate,'yyyy/mm')
+union all
+select to_char(gdate,'yyyy/mm') as yyyymm, 0 as cnt_op, 0 as cnt_cl, count(distinct acct_nbr) as cnt_re
+  from v_ren
+ group by to_char(gdate,'yyyy/mm')
+)
+select  yyyymm      as "年月"
+       ,sum(cnt_op) as "開戶數"
+       ,sum(cnt_cl) as "銷戶數"
+       ,sum(cnt_re) as "續約數"
+  from v1
+ group by yyyymm
+ order by yyyymm
